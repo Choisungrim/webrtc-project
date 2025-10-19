@@ -24,16 +24,6 @@ services:
       - "7881:7881"
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml
-    depends_on:
-      - redis
-  redis:
-    image: redis:6-alpine
-    restart: always
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
 
 volumes:
   caddy_data:
-  redis_data:

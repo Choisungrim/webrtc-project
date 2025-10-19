@@ -15,7 +15,6 @@
     <link rel="stylesheet" href="styles.css" />
 
     <script>
-      // 카메라 권한을 미리 요청하는 스크립트 (권장)
       document.addEventListener("DOMContentLoaded", async () => {
         try {
           const stream = await navigator.mediaDevices.getUserMedia({
@@ -125,7 +124,7 @@
         </div>
       </section>
     </div>
-
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <script src="dist/bundle.js"></script>
   </body>
 </html>

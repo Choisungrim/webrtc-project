@@ -1,0 +1,7 @@
+# Ignore all files inside data & logs folders but keep the folders
+caddy_data/*
+
+
+# But allow .gitkeep inside them
+!caddy_data/.gitkeep
+

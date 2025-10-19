@@ -1,120 +1,96 @@
+import { Inject } from '@nestjs/common';
+import { ClientKafka } from '@nestjs/microservices';
 import {
   WebSocketGateway,
   WebSocketServer,
   OnGatewayConnection,
   OnGatewayDisconnect,
   SubscribeMessage,
+  MessageBody,
+  ConnectedSocket,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Offer, ConnectedSocket } from './interfaces/offer.interface';
 
 @WebSocketGateway({
-  cors: {
-    origin: ['https://localhost:3000', 'https://192.168.100.20:3000'],
-    methods: ['GET', 'POST'],
-    credentials: true,
-  },
+  cors: { origin: '*', credentials: true },
+  namespace: '/ws',
 })
-export class SignalingGateway
-  implements OnGatewayConnection, OnGatewayDisconnect
-{
+export class MessagingGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer() server: Server;
-  private offers: Offer[] = [];
-  private connectedSockets: ConnectedSocket[] = [];
+  constructor(
+    @Inject('MESSAGE_PUBLISHER') private readonly kafka: ClientKafka,
+  ) { }
 
-  handleConnection(socket: Socket) {
-    const userName = socket.handshake.auth.userName;
-    const password = socket.handshake.auth.password;
-
-    if (password !== 'x') {
-      socket.disconnect(true);
-      return;
-    }
-
-    this.connectedSockets.push({ socketId: socket.id, userName });
-    if (this.offers.length) socket.emit('availableOffers', this.offers);
-  }
-  // Disconnection handler
-  handleDisconnect(socket: Socket) {
-    this.connectedSockets = this.connectedSockets.filter(
-      (s) => s.socketId !== socket.id,
-    );
-    this.offers = this.offers.filter((o) => o.socketId !== socket.id);
-  }
-
-  @SubscribeMessage('newOffer')
-  handleNewOffer(socket: Socket, newOffer: any) {
-    const userName = socket.handshake.auth.userName;
-    const newOfferEntry: Offer = {
-      offererUserName: userName,
-      offer: newOffer,
-      offerIceCandidates: [],
-      answererUserName: null,
-      answer: null,
-      answererIceCandidates: [],
-      socketId: socket.id,
-    };
-
-    this.offers = this.offers.filter((o) => o.offererUserName !== userName);
-    this.offers.push(newOfferEntry);
-    socket.broadcast.emit('newOfferAwaiting', [newOfferEntry]);
-  }
-  // Answer handler with ICE candidate acknowledgment
-  @SubscribeMessage('newAnswer')
-  async awaithandleNewAnswer(socket: Socket, offerObj: any) {
-    const userName = socket.handshake.auth.userName;
-    const offerToUpdate = this.offers.find(
-      (o) => o.offererUserName === offerObj.offererUserName,
-    );
-
-    if (!offerToUpdate) return;
-
-    // Send existing ICE candidates to answerer
-    socket.emit('existingIceCandidates', offerToUpdate.offerIceCandidates);
-
-    // Update offer with answer information
-    offerToUpdate.answer = offerObj.answer;
-    offerToUpdate.answererUserName = userName;
-    offerToUpdate.answererSocketId = socket.id;
-
-    // Notify both parties
-    this.server
-      .to(offerToUpdate.socketId)
-      .emit('answerResponse', offerToUpdate);
-    socket.emit('answerConfirmation', offerToUpdate);
-  }
-  // ICE candidate handler with storage
-  @SubscribeMessage('sendIceCandidateToSignalingServer')
-  handleIceCandidate(socket: Socket, iceCandidateObj: any) {
-    const { didIOffer, iceUserName, iceCandidate } = iceCandidateObj;
-
-    // Store candidate in the offer object
-    const offer = this.offers.find((o) =>
-      didIOffer
-        ? o.offererUserName === iceUserName
-        : o.answererUserName === iceUserName,
-    );
-
-    if (offer) {
-      if (didIOffer) {
-        offer.offerIceCandidates.push(iceCandidate);
-      } else {
-        offer.answererIceCandidates.push(iceCandidate);
+  //loop
+  async connectKafkaWithRetry(maxRetries = 10, delay = 2000) {
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        await this.kafka.connect();
+        console.log('Connected to Kafka');
+        return;
+      } catch (err) {
+        console.warn(`Kafka connection failed, retrying... (${i + 1}/${maxRetries})`);
+        await new Promise((res) => setTimeout(res, delay));
       }
     }
+    throw new Error('Could not connect to Kafka after retries');
+  }
 
-    // Forward candidate to other peer
-    const targetUserName = didIOffer
-      ? offer?.answererUserName
-      : offer?.offererUserName;
-    const targetSocket = this.connectedSockets.find(
-      (s) => s.userName === targetUserName,
-    );
+  async onModuleInit() {
+    await this.connectKafkaWithRetry();
+    await new Promise((res) => setTimeout(res, 2000));
+    this.kafka.subscribeToResponseOf('message.log');
+  }
 
-    if (targetSocket) {
-      this.server
-        .to(targetSocket.socketId)
-        .emit('receivedIceCandidateFromServer', iceCandidate);
+
+  handleConnection(socket: Socket) {
+    const userName = socket.handshake.auth?.userName;
+    console.log(`WebSocket Connected: ${userName} (${socket.id})`);
+  }
+
+  handleDisconnect(socket: Socket) {
+    console.log(`Disconnected: ${socket.id}`);
+  }
+
+  @SubscribeMessage('joinRoom')
+  handleJoinRoom(@MessageBody() data: { room: string }, @ConnectedSocket() socket: Socket) {
+    const { room } = data;
+    socket.join(room);
+  }
+
+  @SubscribeMessage('message')
+  handleMessage(
+    @MessageBody() msg: any,
+    @ConnectedSocket() socket: Socket,
+  ) {
+    console.log(`[RECEIVED]:`, msg);
+
+    switch (msg.type) {
+      case 'chat':
+        this.server.emit('chatMessage', msg);
+        break;
+
+      case 'command':
+        this.server.emit('robotCommand', msg);
+        break;
+
+      case 'telemetry':
+        this.server.emit('robotTelemetry', msg);
+        break;
+
+      case 'status':
+        this.server.emit('statusUpdate', msg);
+        break;
+
+      default:
+        console.warn('Unknown type:', msg.type);
+        break;
     }
+    console.log(msg)
+
+    this.kafka.emit('message.log', msg).subscribe({
+      next: () => console.log("Kafka Publish"),
+      error: (err) => console.error("Kafka Publish error", err)
+    });
   }
 }

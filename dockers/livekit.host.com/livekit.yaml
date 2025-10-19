@@ -9,11 +9,6 @@ rtc:
   use_external_ip: true
   enable_loopback_candidate: false
 
-redis:
-  address: redis:6379
-  username: ""
-  password: ""
-
 turn:
   enabled: true
   domain: livekit.host-turn.com

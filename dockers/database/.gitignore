@@ -1,0 +1,15 @@
+# Ignore all files inside data & logs folders but keep the folders
+redis_db/data/*
+redis_db/logs/*
+mariadb/data/*
+mariadb/logs/*
+mongo/data/*
+mongo/logs/*
+
+# But allow .gitkeep inside them
+!redis_db/data/.gitkeep
+!redis_db/logs/.gitkeep
+!mariadb/data/.gitkeep
+!mariadb/logs/.gitkeep
+!mongo/data/.gitkeep
+!mongo/logs/.gitkeep
